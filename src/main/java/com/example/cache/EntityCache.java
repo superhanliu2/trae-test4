@@ -1,5 +1,6 @@
 package com.example.cache;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -17,15 +18,16 @@ import java.util.stream.Collectors;
 public class EntityCache<T extends Cacheable> {
     private final Class<T> entityClass;
     private final Map<String, CacheEntry<T>> cache = new ConcurrentHashMap<>();
-    private final Map<String, Boolean> dirtyMap = new ConcurrentHashMap<>(); // 标记需要持久化的数据
+    private final Set<String> dirtySet = Collections.newSetFromMap(new ConcurrentHashMap<>()); // 标记需要持久化的数据
     
     // 缓存配置
     private long maxSizeBytes = Long.MAX_VALUE;
     private int maxRecords = Integer.MAX_VALUE;
     private long persistenceIntervalMs = 60000; // 默认1分钟持久化一次
     
-    // 持久化策略
+    // 持久化策略和配置
     private PersistenceStrategy<T> persistenceStrategy;
+    private EntityPersistenceConfig<T> persistenceConfig;
     private ScheduledExecutorService scheduler;
     
     /**
@@ -69,6 +71,22 @@ public class EntityCache<T extends Cacheable> {
         if (persistenceStrategy != null) {
             startPersistenceScheduler();
         }
+    }
+    
+    /**
+     * 设置持久化配置
+     * @param persistenceConfig 持久化配置
+     */
+    public void setPersistenceConfig(EntityPersistenceConfig<T> persistenceConfig) {
+        this.persistenceConfig = persistenceConfig;
+    }
+    
+    /**
+     * 获取持久化配置
+     * @return 持久化配置
+     */
+    public EntityPersistenceConfig<T> getPersistenceConfig() {
+        return persistenceConfig;
     }
     
     /**
@@ -131,9 +149,19 @@ public class EntityCache<T extends Cacheable> {
             return null;
         }
         
-        // 标记为需要持久化
+        // 标记为需要持久化：新增数据或属性有变化
         if (persistenceStrategy != null) {
-            dirtyMap.put(id, true);
+            if (oldEntry == null) {
+                // 新增数据，需要持久化
+                dirtySet.add(id);
+            } else {
+                // 修改数据，检查属性是否有变化
+                Map<String, Object> changes = PropertyChangeDetector.detectChanges(oldEntry.data, entity);
+                if (!changes.isEmpty()) {
+                    // 只有属性有变化时才标记为脏数据
+                    dirtySet.add(id);
+                }
+            }
         }
         
         return oldEntry != null ? oldEntry.data : null;
@@ -171,7 +199,7 @@ public class EntityCache<T extends Cacheable> {
      */
     public T remove(String id) {
         CacheEntry<T> entry = cache.remove(id);
-        dirtyMap.remove(id);
+        dirtySet.remove(id);
         
         if (persistenceStrategy != null && entry != null) {
             // 标记为需要持久化删除
@@ -227,13 +255,13 @@ public class EntityCache<T extends Cacheable> {
      * 持久化脏数据
      */
     private void persistDirtyData() {
-        if (persistenceStrategy == null || dirtyMap.isEmpty()) {
+        if (persistenceStrategy == null || dirtySet.isEmpty()) {
             return;
         }
         
-        // 复制脏数据ID并清空脏映射
-        Set<String> dirtyIds = Set.copyOf(dirtyMap.keySet());
-        dirtyMap.keySet().removeAll(dirtyIds);
+        // 复制脏数据ID并清空脏集合
+        Set<String> dirtyIds = new HashSet<>(dirtySet);
+        dirtySet.clear();
         
         // 获取需要持久化的实体
         Set<T> dirtyEntities = dirtyIds.stream()
@@ -243,6 +271,25 @@ public class EntityCache<T extends Cacheable> {
         
         if (!dirtyEntities.isEmpty()) {
             persistenceStrategy.saveOrUpdate(dirtyEntities);
+            
+            // 持久化后清空瞬态属性
+            if (persistenceConfig != null) {
+                Set<String> transientProperties = persistenceConfig.getTransientProperties();
+                if (!transientProperties.isEmpty()) {
+                    // 创建临时实体副本以避免并发问题
+                    dirtyEntities.forEach(entity -> {
+                        String id = entity.getId();
+                        CacheEntry<T> currentEntry = cache.get(id);
+                        if (currentEntry != null) {
+                            T currentEntity = currentEntry.data;
+                            // 清空瞬态属性
+                            PropertyChangeDetector.clearProperties(currentEntity, transientProperties);
+                            // 更新缓存条目（避免死循环，不标记为脏数据）
+                            cache.put(id, new CacheEntry<>(currentEntity));
+                        }
+                    });
+                }
+            }
         }
     }
     
