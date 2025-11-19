@@ -99,8 +99,27 @@ public class UsageExample {
         
         // 1. 用户缓存配置
         EntityCache<User> userCache = cacheManager.getCache(User.class);
-        userCache.setMaxRecords(1000); // 最大1000条记录
-        userCache.setMaxSizeBytes(1024 * 1024); // 最大1MB内存
+        
+        // 创建用户持久化配置
+        EntityPersistenceConfig<User> userConfig = new EntityPersistenceConfig<User>("users")
+                .addInsertableAndUpdatableProperty("name")
+                .addInsertableAndUpdatableProperty("age")
+                .addTransientProperty("lastUpdateTime"); // 最后更新时间作为瞬态属性
+        
+        cacheManager.setPersistenceConfig(User.class, userConfig);
+        
+        // 2. 订单缓存配置
+        EntityCache<Order> orderCache = cacheManager.getCache(Order.class);
+        
+        // 创建订单持久化配置
+        EntityPersistenceConfig<Order> orderConfig = new EntityPersistenceConfig<Order>("orders")
+                .addInsertableAndUpdatableProperty("userId")
+                .addInsertableAndUpdatableProperty("amount")
+                .setCascadePersist(true); // 启用级联持久化
+        
+        cacheManager.setPersistenceConfig(Order.class, orderConfig);
+        
+        // 设置缓存参数示例
         userCache.setPersistenceIntervalMs(5000); // 每5秒持久化一次
         
         // 设置用户JDBC持久化策略
@@ -128,8 +147,7 @@ public class UsageExample {
             }
         });
         
-        // 2. 订单缓存配置
-        EntityCache<Order> orderCache = cacheManager.getCache(Order.class);
+        // 设置订单缓存参数
         orderCache.setMaxRecords(5000); // 最大5000条记录
         orderCache.setMaxSizeBytes(5 * 1024 * 1024); // 最大5MB内存
         orderCache.setPersistenceIntervalMs(10000); // 每10秒持久化一次

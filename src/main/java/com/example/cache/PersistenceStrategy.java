@@ -15,6 +15,22 @@ public interface PersistenceStrategy<T extends Cacheable> {
     void saveOrUpdate(Set<T> entities);
     
     /**
+     * 插入实体集合
+     * @param entities 实体集合
+     */
+    default void insert(Set<T> entities) {
+        saveOrUpdate(entities);
+    }
+    
+    /**
+     * 更新实体集合
+     * @param entities 实体集合
+     */
+    default void update(Set<T> entities) {
+        saveOrUpdate(entities);
+    }
+    
+    /**
      * 根据ID删除实体
      * @param id 实体ID
      */
